@@ -9,7 +9,10 @@ import overflowdb.traversal.help.Doc
 class AssignmentTraversal(val traversal: Iterator[OpNodes.Assignment]) extends AnyVal {
 
   @Doc(info = "Left-hand sides of assignments")
-  def target: Iterator[nodes.Expression] = traversal.map(_.target)
+  def target: Iterator[nodes.Expression] = traversal
+    // .filterNot(_.argument(1).nonEmpty)
+    .map(_.target)
+    .filterNot(_ == null)
 
   @Doc(info = "Right-hand sides of assignments")
   def source: Iterator[nodes.Expression] = traversal.map(_.source)

@@ -18,8 +18,16 @@ class CallMethods(val node: Call) extends AnyVal with NodeExtension with HasLoca
   def argument: Iterator[Expression] =
     node._argumentOut.collectAll[Expression]
 
-  def argument(index: Int): Expression =
-    arguments(index).head
+  // def argument(index: Int): Expression =
+  //   arguments(index).head
+  def argument(index: Int): Expression = {
+    val iter = arguments(index)
+    if (iter.hasNext) {
+      iter.head
+    } else {
+      null
+    }
+  }
 
   def argumentOption(index: Int): Option[Expression] =
     node._argumentOut.collectFirst {

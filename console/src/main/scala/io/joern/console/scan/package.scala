@@ -22,8 +22,11 @@ package object scan {
       */
     def apply(cpg: Cpg): List[NewFinding] = {
       try {
-        q.traversal(cpg)
-          .map(evidence =>
+        // logger.info(s"start query: ${q.name}...")
+        val iter = q.traversal(cpg)
+        val (iter1, iter2) = iter.duplicate
+        // logger.info(s"end query: ${q.name} with ${iter1.size}")
+        iter2.map(evidence =>
             finding(
               evidence = evidence,
               name = q.name,
@@ -36,7 +39,7 @@ package object scan {
           .l
       } catch {
         case ex: Throwable =>
-          logger.warn("Error executing query", ex)
+          logger.warn(s"${q.name} - Error executing query", ex)
           List()
       }
 

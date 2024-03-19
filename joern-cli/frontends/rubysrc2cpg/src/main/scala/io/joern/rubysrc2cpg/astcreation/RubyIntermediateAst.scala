@@ -56,7 +56,12 @@ object RubyIntermediateAst {
     def baseClass: Option[RubyNode] = None
   }
 
-  final case class ClassDeclaration(name: RubyNode, baseClass: Option[RubyNode], body: RubyNode)(span: TextSpan)
+  final case class ClassDeclaration(
+    name: RubyNode,
+    baseClass: Option[RubyNode],
+    body: RubyNode,
+    fields: List[RubyNode with RubyFieldIdentifier]
+  )(span: TextSpan)
       extends RubyNode(span)
       with TypeDeclaration
 
@@ -99,11 +104,15 @@ object RubyIntermediateAst {
       extends RubyNode(span)
       with MethodParameter
 
-  final case class ArrayParameter(name: Option[String])(span: TextSpan) extends RubyNode(span)
+  sealed trait CollectionParameter extends MethodParameter
 
-  final case class HashParameter(name: Option[String])(span: TextSpan) extends RubyNode(span)
+  final case class ArrayParameter(name: String)(span: TextSpan) extends RubyNode(span) with CollectionParameter
 
-  final case class ProcParameter(name: RubyNode)(span: TextSpan) extends RubyNode(span)
+  final case class HashParameter(name: String)(span: TextSpan) extends RubyNode(span) with CollectionParameter
+
+  final case class ProcParameter(target: RubyNode)(span: TextSpan) extends RubyNode(span) with MethodParameter {
+    def name: String = target.text
+  }
 
   final case class SingleAssignment(lhs: RubyNode, op: String, rhs: RubyNode)(span: TextSpan) extends RubyNode(span)
 
@@ -122,6 +131,14 @@ object RubyIntermediateAst {
   /** A control structure's clause, which may contain an additional control structures.
     */
   sealed trait ControlFlowClause
+
+  /** Any structure that is an Identifier, except self. e.g. `a`, `@a`, `@@a`
+    */
+  sealed trait RubyIdentifier
+
+  /** Ruby Instance or Class Variable Identifiers: `@a`, `@@a`
+    */
+  sealed trait RubyFieldIdentifier extends RubyIdentifier
 
   final case class RescueExpression(
     body: RubyNode,
@@ -192,8 +209,16 @@ object RubyIntermediateAst {
 
   final case class ReturnExpression(expressions: List[RubyNode])(span: TextSpan) extends RubyNode(span)
 
-  /** Represents an unqualified identifier e.g. `X`, `x`, `@x`, `@@x`, `$x`, `$<`, etc. */
-  final case class SimpleIdentifier(typeFullName: Option[String] = None)(span: TextSpan) extends RubyNode(span)
+  /** Represents an unqualified identifier e.g. `X`, `x`,  `@@x`, `$x`, `$<`, etc. */
+  final case class SimpleIdentifier(typeFullName: Option[String] = None)(span: TextSpan)
+      extends RubyNode(span)
+      with RubyIdentifier
+
+  /** Represents a InstanceFieldIdentifier e.g `@x` */
+  final case class InstanceFieldIdentifier()(span: TextSpan) extends RubyNode(span) with RubyFieldIdentifier
+
+  /** Represents a ClassFieldIdentifier e.g `@@x` */
+  final case class ClassFieldIdentifier()(span: TextSpan) extends RubyNode(span) with RubyFieldIdentifier
 
   final case class SelfIdentifier()(span: TextSpan) extends RubyNode(span)
 
@@ -207,13 +232,17 @@ object RubyIntermediateAst {
   final case class StaticLiteral(typeFullName: String)(span: TextSpan) extends RubyNode(span) with LiteralExpr {
     def isSymbol: Boolean = text.startsWith(":")
 
-    def isString: Boolean = text.startsWith("\"")
+    def isString: Boolean = text.startsWith("\"") || text.startsWith("'")
 
-    def innerText: String = text match
-      case s":'$content'" => content
-      case s":$symbol"    => symbol
-      case s"'$content'"  => content
-      case s              => s
+    def innerText: String = {
+      val strRegex = ":?['\"]([\\w\\d_-]+)['\"]".r
+      text match {
+        case s":'$content'"                       => content
+        case s":$symbol"                          => symbol
+        case strRegex(content) if content != null => content
+        case s                                    => s
+      }
+    }
   }
 
   final case class DynamicLiteral(typeFullName: String, expressions: List[RubyNode])(span: TextSpan)
@@ -256,6 +285,20 @@ object RubyIntermediateAst {
       extends RubyNode(span)
       with RubyCall
 
+  final case class RequireCall(target: RubyNode, argument: RubyNode, isRelative: Boolean)(span: TextSpan)
+      extends RubyNode(span)
+      with RubyCall {
+    def arguments: List[RubyNode] = List(argument)
+    def asSimpleCall: SimpleCall  = SimpleCall(target, arguments)(span)
+  }
+
+  final case class IncludeCall(target: RubyNode, argument: RubyNode)(span: TextSpan)
+      extends RubyNode(span)
+      with RubyCall {
+    def arguments: List[RubyNode] = List(argument)
+    def asSimpleCall: SimpleCall  = SimpleCall(target, arguments)(span)
+  }
+
   /** Represents standalone `proc { ... }` or `lambda { ... }` expressions
     */
   final case class ProcOrLambdaExpr(block: Block)(span: TextSpan) extends RubyNode(span)
@@ -297,10 +340,26 @@ object RubyIntermediateAst {
   final case class IndexAccess(target: RubyNode, indices: List[RubyNode])(span: TextSpan) extends RubyNode(span)
 
   // TODO: Might be replaced by MemberCall simply?
-  final case class MemberAccess(target: RubyNode, op: String, methodName: String)(span: TextSpan) extends RubyNode(span)
+  final case class MemberAccess(target: RubyNode, op: String, memberName: String)(span: TextSpan)
+      extends RubyNode(span) {
+    override def toString: String = s"${target.text}.$memberName"
+  }
 
-  final case class ObjectInstantiation(clazz: RubyNode, arguments: List[RubyNode])(span: TextSpan)
+  /** A Ruby node that instantiates objects.
+    */
+  sealed trait ObjectInstantiation extends RubyCall
+
+  final case class SimpleObjectInstantiation(target: RubyNode, arguments: List[RubyNode])(span: TextSpan)
       extends RubyNode(span)
+      with ObjectInstantiation
+
+  final case class ObjectInstantiationWithBlock(target: RubyNode, arguments: List[RubyNode], block: Block)(
+    span: TextSpan
+  ) extends RubyNode(span)
+      with ObjectInstantiation
+      with RubyCallWithBlock[SimpleObjectInstantiation] {
+    def withoutBlock: SimpleObjectInstantiation = SimpleObjectInstantiation(target, arguments)(span)
+  }
 
   /** Represents a `do` or `{ .. }` (braces) block. */
   final case class Block(parameters: List[RubyNode], body: RubyNode)(span: TextSpan) extends RubyNode(span) {
@@ -316,4 +375,6 @@ object RubyIntermediateAst {
   final case class UnaryExpression(op: String, expression: RubyNode)(span: TextSpan) extends RubyNode(span)
 
   final case class BinaryExpression(lhs: RubyNode, op: String, rhs: RubyNode)(span: TextSpan) extends RubyNode(span)
+
+  final case class HereDocNode(content: String)(span: TextSpan) extends RubyNode(span)
 }

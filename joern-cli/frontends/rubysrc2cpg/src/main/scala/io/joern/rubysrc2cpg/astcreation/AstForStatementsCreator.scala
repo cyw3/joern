@@ -119,15 +119,28 @@ trait AstForStatementsCreator(implicit withSchemaValidation: ValidationMode) { t
       val ifElseChain = whenClauses.foldRight[Option[RubyNode]](elseThenClause) {
         (whenClause: WhenClause, restClause: Option[RubyNode]) =>
           // We translate multiple match expressions into an or expression.
-          // There may be a splat as the last match expression, which is currently parsed as unknown
+          //
           // A single match expression is compared using `.===` to the case target expression if it is present
           // otherwise it is treated as a conditional.
+          //
+          // There may be a splat as the last match expression,
+          // `case y when *x then c end` or
+          // `case when *x then c end`
+          // which is translated to `x.include? y` and `x.any?` conditions respectively
+
           val conditions = whenClause.matchExpressions.map { mExpr =>
             expr.map(e => MemberCall(mExpr, ".", "===", List(e))(mExpr.span)).getOrElse(mExpr)
           } ++ (whenClause.matchSplatExpression.iterator.flatMap {
-            case u: Unknown => List(u)
+            case splat @ SplattingRubyNode(exprList) =>
+              expr
+                .map { e =>
+                  List(MemberCall(exprList, ".", "include?", List(e))(splat.span))
+                }
+                .getOrElse {
+                  List(MemberCall(exprList, ".", "any?", List())(splat.span))
+                }
             case e =>
-              logger.warn("Splatting not implemented for `when` in ruby `case`")
+              logger.warn(s"Unrecognised RubyNode (${e.getClass}) in case match splat expression")
               List(Unknown()(e.span))
           })
           // There is always at least one match expression or a splat
@@ -173,7 +186,7 @@ trait AstForStatementsCreator(implicit withSchemaValidation: ValidationMode) { t
    * foo(<args>, <method_ref>)
    * ```
    */
-  private def astsForCallWithBlock[C <: RubyCall](node: RubyNode with RubyCallWithBlock[C]): Seq[Ast] = {
+  protected def astsForCallWithBlock[C <: RubyCall](node: RubyNode with RubyCallWithBlock[C]): Seq[Ast] = {
     val Seq(methodDecl, typeDecl, _, methodRef) = astForDoBlock(node.block): @unchecked
     val methodRefDummyNode                      = methodRef.root.map(DummyNode(_)(node.span)).toList
 
@@ -186,7 +199,7 @@ trait AstForStatementsCreator(implicit withSchemaValidation: ValidationMode) { t
         Ast()
     }
 
-    methodDecl :: typeDecl :: methodRef :: callWithLambdaArg :: Nil
+    methodDecl :: typeDecl :: callWithLambdaArg :: Nil
   }
 
   protected def astForDoBlock(block: Block with RubyNode): Seq[Ast] = {
@@ -236,8 +249,10 @@ trait AstForStatementsCreator(implicit withSchemaValidation: ValidationMode) { t
     node match
       case expr: ControlFlowExpression =>
         astsForStatement(transformLastRubyNodeInControlFlowExpressionBody(expr, returnLastNode, elseReturnNil))
-      case _: (LiteralExpr | BinaryExpression | UnaryExpression | SimpleIdentifier | SimpleCall | IndexAccess |
-            Association) =>
+      case node: MemberCallWithBlock => returnAstForRubyCall(node)
+      case node: SimpleCallWithBlock => returnAstForRubyCall(node)
+      case _: (LiteralExpr | BinaryExpression | UnaryExpression | SimpleIdentifier | IndexAccess | Association |
+            RubyCall) =>
         astForReturnStatement(ReturnExpression(List(node))(node.span)) :: Nil
       case node: SingleAssignment =>
         astForSingleAssignment(node) :: List(astForReturnStatement(ReturnExpression(List(node.lhs))(node.span)))
@@ -247,7 +262,6 @@ trait AstForStatementsCreator(implicit withSchemaValidation: ValidationMode) { t
           astForReturnFieldAccess(MemberAccess(node.target, node.op, node.attributeName)(node.span))
         )
       case node: MemberAccess    => astForReturnMemberCall(node) :: Nil
-      case node: MemberCall      => astForReturnMemberCall(node) :: Nil
       case ret: ReturnExpression => astForReturnStatement(ret) :: Nil
       case node: MethodDeclaration =>
         (astForMethodDeclaration(node) :+ astForReturnMethodDeclarationSymbolName(node)).toList
@@ -256,6 +270,15 @@ trait AstForStatementsCreator(implicit withSchemaValidation: ValidationMode) { t
           s"Implicit return here not supported yet: ${node.text} (${node.getClass.getSimpleName}), only generating statement"
         )
         astsForStatement(node).toList
+  }
+
+  private def returnAstForRubyCall[C <: RubyCall](node: RubyNode with RubyCallWithBlock[C]): Seq[Ast] = {
+    val Seq(methodDecl, typeDecl, callAst) = astsForCallWithBlock(node): @unchecked
+
+    Ast.storeInDiffGraph(methodDecl, diffGraph)
+    Ast.storeInDiffGraph(typeDecl, diffGraph)
+
+    returnAst(returnNode(node, code(node)), List(callAst)) :: Nil
   }
 
   private def astForReturnFieldAccess(node: MemberAccess): Ast = {

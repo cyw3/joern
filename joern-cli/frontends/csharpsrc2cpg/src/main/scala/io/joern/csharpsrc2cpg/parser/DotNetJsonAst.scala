@@ -33,6 +33,8 @@ object DotNetJsonAst {
 
   sealed trait JumpStatement extends BaseStmt
 
+  sealed trait BaseLambdaExpression extends BaseExpr
+
   object GlobalStatement extends BaseStmt
 
   object ExpressionStatement extends BaseStmt
@@ -57,6 +59,8 @@ object DotNetJsonAst {
 
   object EnumDeclaration extends TypeDeclaration
 
+  object AnonymousObjectCreationExpression extends TypeDeclaration
+
   object EnumMemberDeclaration extends DeclarationExpr
 
   object InterfaceDeclaration extends TypeDeclaration
@@ -73,7 +77,9 @@ object DotNetJsonAst {
 
   object VariableDeclarator extends DeclarationExpr
 
-  object SimpleLambdaExpression extends BaseExpr
+  object SimpleLambdaExpression extends BaseLambdaExpression
+
+  object ParenthesizedLambdaExpression extends BaseLambdaExpression
 
   sealed trait ClauseExpr extends BaseExpr
 
@@ -85,6 +91,7 @@ object DotNetJsonAst {
   object StringLiteralExpression  extends LiteralExpr
   object TrueLiteralExpression    extends LiteralExpr
   object FalseLiteralExpression   extends LiteralExpr
+  object NullLiteralExpression    extends LiteralExpr
 
   object UsingDirective extends BaseExpr
 
@@ -223,6 +230,24 @@ object DotNetJsonAst {
 
   object ExpressionElement extends BaseExpr
 
+  object CastExpression extends BaseExpr
+
+  object AnonymousObjectMemberDeclarator extends DeclarationExpr
+
+  object ConditionalExpression extends BaseExpr
+
+  object ImplicitArrayCreationExpression extends BaseExpr
+
+  object InterpolatedStringExpression extends BaseExpr
+
+  object InterpolatedStringText extends BaseExpr
+
+  object Interpolation extends BaseExpr
+
+  object ConditionalAccessExpression extends MemberAccessExpr
+
+  object MemberBindingExpression extends BaseExpr
+
   object Unknown extends DotNetParserNode
 
 }
@@ -242,6 +267,7 @@ object ParserKeys {
   val ColumnStart       = "ColumnStart"
   val ColumnEnd         = "ColumnEnd"
   val Condition         = "Condition"
+  val Contents          = "Contents"
   val Declaration       = "Declaration"
   val Elements          = "Elements"
   val ElementType       = "ElementType"
@@ -255,6 +281,7 @@ object ParserKeys {
   val Identifier        = "Identifier"
   val Incrementors      = "Incrementors"
   val Initializer       = "Initializer"
+  val Initializers      = "Initializers"
   val Keyword           = "Keyword"
   val Kind              = "Kind"
   val Labels            = "Labels"
@@ -265,6 +292,7 @@ object ParserKeys {
   val Members           = "Members"
   val Modifiers         = "Modifiers"
   val Name              = "Name"
+  val NameEquals        = "NameEquals"
   val Operand           = "Operand"
   val OperatorToken     = "OperatorToken"
   val Parameter         = "Parameter"
@@ -276,10 +304,14 @@ object ParserKeys {
   val Statements        = "Statements"
   val ReturnType        = "ReturnType"
   val Right             = "Right"
+  val TextToken         = "TextToken"
   val Type              = "Type"
   val TypeArgumentList  = "TypeArgumentList"
   val Types             = "Types"
   val Usings            = "Usings"
   val Value             = "Value"
   val Variables         = "Variables"
+  val WhenFalse         = "WhenFalse"
+  val WhenNotNull       = "WhenNotNull"
+  val WhenTrue          = "WhenTrue"
 }

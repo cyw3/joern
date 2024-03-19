@@ -460,9 +460,21 @@ trait AstForDeclarationsCreator(implicit withSchemaValidation: ValidationMode) {
     val name     = nextClosureName()
     val fullName = s"${scope.surroundingScopeFullName.getOrElse(Defines.UnresolvedNamespace)}.$name"
     // Set parameter type if necessary, which may require the type hint
-    val paramJson = lambdaExpression.json(ParserKeys.Parameter)
     val paramType = paramTypeHint.flatMap(AstCreatorHelper.elementTypesFromCollectionType).headOption
-    val params    = astForParameter(createDotNetNodeInfo(paramJson), 0, paramType) :: Nil
+    val paramAsts = Try(lambdaExpression.json(ParserKeys.Parameter)).toOption match {
+      case Some(parameterObj: ujson.Obj) =>
+        Seq(astForParameter(createDotNetNodeInfo(parameterObj), 0, paramType))
+      case _ =>
+        lambdaExpression
+          .json(ParserKeys.ParameterList)
+          .obj(ParserKeys.Parameters)
+          .arr
+          .map(createDotNetNodeInfo)
+          .zipWithIndex
+          .map(astForParameter(_, _, paramType))
+          .toSeq
+    }
+
     scope.pushNewScope(MethodScope(fullName))
     // Handle lambda body
     val bodyJson = createDotNetNodeInfo(lambdaExpression.json(ParserKeys.Body))
@@ -496,7 +508,7 @@ trait AstForDeclarationsCreator(implicit withSchemaValidation: ValidationMode) {
       .headOption
       .getOrElse(Defines.Any)
     val methodReturn = methodReturnNode(lambdaExpression, lambdaReturnType)
-    Ast.storeInDiffGraph(methodAst(method, params, blockAst_, methodReturn, modifiers), diffGraph)
+    Ast.storeInDiffGraph(methodAst(method, paramAsts, blockAst_, methodReturn, modifiers), diffGraph)
     // Create type decl
     val lambdaTypeDecl = typeDeclNode(lambdaExpression, name, fullName, relativeFileName, code(lambdaExpression))
     scope.surroundingScopeFullName.foreach { fn =>
@@ -507,4 +519,67 @@ trait AstForDeclarationsCreator(implicit withSchemaValidation: ValidationMode) {
     val methodRef = methodRefNode(lambdaExpression, code(lambdaExpression), fullName, lambdaReturnType)
     Ast(methodRef) :: Nil
   }
+
+  def astForAnonymousObjectCreationExpression(anonObjExpr: DotNetNodeInfo): Seq[Ast] = {
+    val typeDeclName     = nextAnonymousTypeName()
+    val typeDeclFullName = s"${scope.surroundingScopeFullName.getOrElse(Defines.Any)}.${typeDeclName}"
+
+    val _typeDeclNode = typeDeclNode(
+      anonObjExpr,
+      typeDeclName,
+      typeDeclFullName,
+      relativeFileName,
+      code(anonObjExpr),
+      astParentType = NodeTypes.METHOD,
+      astParentFullName = scope.surroundingScopeFullName.getOrElse(Defines.Any)
+    )
+
+    scope.pushNewScope(TypeScope(typeDeclFullName))
+
+    val memberAsts = anonObjExpr
+      .json(ParserKeys.Initializers)
+      .arr
+      .map(createDotNetNodeInfo)
+      .map(astForAnonymousObjectMemberDeclarator)
+      .toSeq
+
+    scope.popScope()
+    Ast.storeInDiffGraph(Ast(_typeDeclNode).withChildren(memberAsts), diffGraph)
+
+    val _typeRefNode = typeRefNode(anonObjExpr, code(anonObjExpr), typeDeclFullName)
+    Ast(_typeRefNode) :: Nil
+  }
+
+  private def astForAnonymousObjectMemberDeclarator(memberDeclarator: DotNetNodeInfo): Ast = {
+    val rhsNode         = createDotNetNodeInfo(memberDeclarator.json(ParserKeys.Expression))
+    val rhsAst          = astForNode(rhsNode)
+    val rhsTypeFullName = getTypeFullNameFromAstNode(rhsAst)
+
+    val lhsNode = Try(
+      createDotNetNodeInfo(memberDeclarator.json(ParserKeys.NameEquals)(ParserKeys.Name))
+    ).toOption match {
+      case Some(lhs) => Option(lhs)
+      case None      => None
+    }
+
+    val lhsAst = lhsNode match {
+      case Some(node) => astForNode(node)
+      case _          => Seq.empty[Ast]
+    }
+
+    val name = lhsNode match {
+      case Some(node) => nameFromNode(node)
+      case _          => nameFromNode(rhsNode)
+    }
+
+    val memberType = rhsTypeFullName match {
+      case Defines.Any => getTypeFullNameFromAstNode(lhsAst)
+      case otherType   => otherType
+    }
+
+    val _memberNode = memberNode(memberDeclarator, name, code(memberDeclarator), memberType)
+
+    Ast(_memberNode)
+  }
+
 }

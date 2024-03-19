@@ -2,15 +2,20 @@ package io.joern.csharpsrc2cpg.astcreation
 
 import io.joern.csharpsrc2cpg.parser.DotNetJsonAst.*
 import io.joern.csharpsrc2cpg.parser.{DotNetJsonAst, DotNetNodeInfo, ParserKeys}
-import io.joern.csharpsrc2cpg.{Constants, astcreation}
+import io.joern.csharpsrc2cpg.{CSharpDefines, Constants, astcreation}
 import io.joern.x2cpg.{Ast, Defines, ValidationMode}
 import io.shiftleft.codepropertygraph.generated.nodes.*
-import io.shiftleft.codepropertygraph.generated.{DispatchTypes, PropertyNames}
+import io.shiftleft.codepropertygraph.generated.{DispatchTypes, Operators, PropertyNames}
+import io.shiftleft.passes.IntervalKeyPool
 import ujson.Value
 
 import scala.annotation.tailrec
 import scala.util.{Failure, Success, Try}
 trait AstCreatorHelper(implicit withSchemaValidation: ValidationMode) { this: AstCreator =>
+
+  private val anonymousTypeKeyPool = new IntervalKeyPool(first = 0, last = Long.MaxValue)
+
+  def nextAnonymousTypeName(): String = s"${CSharpDefines.AnonymousTypePrefix}${anonymousTypeKeyPool.next}"
 
   protected def createDotNetNodeInfo(json: Value): DotNetNodeInfo =
     AstCreatorHelper.createDotNetNodeInfo(json, Option(this.relativeFileName))
@@ -82,6 +87,17 @@ trait AstCreatorHelper(implicit withSchemaValidation: ValidationMode) { this: As
         identifierNode(dotNetNode.orNull, x.name, x.name, Defines.Any)
   }
 
+  protected val fixedTypeOperators: Map[String, String] = Map(
+    Operators.equals            -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool),
+    Operators.notEquals         -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool),
+    Operators.logicalAnd        -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool),
+    Operators.logicalOr         -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool),
+    Operators.greaterThan       -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool),
+    Operators.greaterEqualsThan -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool),
+    Operators.lessThan          -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool),
+    Operators.lessEqualsThan    -> BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool)
+  )
+
   protected def nodeTypeFullName(node: DotNetNodeInfo): String = {
     node.node match {
       case NumericLiteralExpression if node.code.matches("^\\d+$") => // e.g. 200
@@ -94,6 +110,7 @@ trait AstCreatorHelper(implicit withSchemaValidation: ValidationMode) { this: As
         BuiltinTypes.DotNetTypeMap(BuiltinTypes.Decimal)
       case StringLiteralExpression                        => BuiltinTypes.DotNetTypeMap(BuiltinTypes.String)
       case TrueLiteralExpression | FalseLiteralExpression => BuiltinTypes.DotNetTypeMap(BuiltinTypes.Bool)
+      case NullLiteralExpression                          => BuiltinTypes.DotNetTypeMap(BuiltinTypes.Null)
       case ObjectCreationExpression =>
         val typeName = nameFromNode(createDotNetNodeInfo(node.json(ParserKeys.Type)))
         scope
@@ -163,12 +180,14 @@ object AstCreatorHelper {
   def nameFromNode(node: DotNetNodeInfo): String = {
     node.node match
       case NamespaceDeclaration | UsingDirective | FileScopedNamespaceDeclaration => nameFromNamespaceDeclaration(node)
-      case IdentifierName | Parameter | _: DeclarationExpr | GenericName          => nameFromIdentifier(node)
-      case QualifiedName                                                          => nameFromQualifiedName(node)
-      case SimpleMemberAccessExpression => nameFromIdentifier(createDotNetNodeInfo(node.json(ParserKeys.Name)))
-      case ObjectCreationExpression     => nameFromNode(createDotNetNodeInfo(node.json(ParserKeys.Type)))
-      case ThisExpression               => "this"
-      case _                            => "<empty>"
+      case IdentifierName | Parameter | _: DeclarationExpr | GenericName =>
+        nameFromIdentifier(node)
+      case QualifiedName => nameFromQualifiedName(node)
+      case SimpleMemberAccessExpression | MemberBindingExpression =>
+        nameFromIdentifier(createDotNetNodeInfo(node.json(ParserKeys.Name)))
+      case ObjectCreationExpression | CastExpression => nameFromNode(createDotNetNodeInfo(node.json(ParserKeys.Type)))
+      case ThisExpression                            => "this"
+      case _                                         => "<empty>"
   }
 
   private def nameFromNamespaceDeclaration(namespace: DotNetNodeInfo): String = {
